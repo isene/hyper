@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#0a0a14"/>
+    </linearGradient>
+    <linearGradient id="rust" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f74c00"/>
+      <stop offset="100%" style="stop-color:#b7410e"/>
+    </linearGradient>
+  </defs>
+  <style>
+    @keyframes dot { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+    .d1 { animation: dot 1.5s ease-in-out infinite; }
+    .d2 { animation: dot 1.5s ease-in-out 0.5s infinite; }
+    .d3 { animation: dot 1.5s ease-in-out 1s infinite; }
+  </style>
+  <circle cx="128" cy="128" r="120" fill="url(#bg)" stroke="url(#rust)" stroke-width="3"/>
+
+  <!-- Hierarchical outline representation -->
+  <!-- Parent bullet -->
+  <circle cx="64" cy="72" r="5" fill="#f74c00"/>
+  <line x1="76" y1="72" x2="200" y2="72" stroke="#ffe9a8" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Child 1 -->
+  <line x1="64" y1="76" x2="64" y2="108" stroke="#f74c00" stroke-width="1.5"/>
+  <line x1="64" y1="108" x2="80" y2="108" stroke="#f74c00" stroke-width="1.5"/>
+  <circle cx="86" cy="108" r="4" fill="#80dfff"/>
+  <line x1="96" y1="108" x2="170" y2="108" stroke="#cfe8ff" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Grandchild with qualifier highlight -->
+  <line x1="86" y1="112" x2="86" y2="138" stroke="#80dfff" stroke-width="1.5"/>
+  <line x1="86" y1="138" x2="102" y2="138" stroke="#80dfff" stroke-width="1.5"/>
+  <rect x="106" y="132" width="30" height="12" rx="2" fill="none" stroke="#46ff46" stroke-width="1.5"/>
+  <text x="108" y="142" fill="#46ff46" font-family="monospace" font-size="10">X</text>
+  <line x1="140" y1="138" x2="200" y2="138" stroke="#cfe8ff" stroke-width="2" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- Child 2 with operator colon -->
+  <line x1="64" y1="144" x2="64" y2="174" stroke="#f74c00" stroke-width="1.5"/>
+  <line x1="64" y1="174" x2="80" y2="174" stroke="#f74c00" stroke-width="1.5"/>
+  <text x="86" y="180" fill="#3a7aff" font-family="monospace" font-size="14" font-weight="bold">AND:</text>
+  <line x1="130" y1="174" x2="200" y2="174" stroke="#cfe8ff" stroke-width="2" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- Child 3 folded indicator -->
+  <line x1="64" y1="180" x2="64" y2="206" stroke="#f74c00" stroke-width="1.5"/>
+  <line x1="64" y1="206" x2="80" y2="206" stroke="#f74c00" stroke-width="1.5"/>
+  <polygon points="84,200 84,212 96,206" fill="#ffe9a8"/>
+  <line x1="104" y1="206" x2="180" y2="206" stroke="#cfe8ff" stroke-width="2" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- Animated dots for dynamic folding -->
+  <circle class="d1" cx="214" cy="206" r="2" fill="#f74c00"/>
+  <circle class="d2" cx="222" cy="206" r="2" fill="#f74c00"/>
+  <circle class="d3" cx="230" cy="206" r="2" fill="#f74c00"/>
+</svg>

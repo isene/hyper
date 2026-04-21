@@ -1,0 +1,83 @@
+# Hyper - Terminal HyperList Viewer
+
+<img src="img/hyper.svg" align="left" width="150" height="150">
+
+![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
+
+Fast terminal viewer for the [HyperList](https://isene.org/hyperlist/) outline format. Opens `.hl` files, renders them with full HyperList 2.6 syntax coloring, and lets you fold/unfold hierarchies with a keystroke.
+
+Rust feature port of the Ruby [HyperList TUI](https://github.com/isene/HyperList), built on [crust](https://github.com/isene/crust).
+
+<br clear="left"/>
+
+## Install
+
+```bash
+git clone https://github.com/isene/hyper
+cd hyper
+cargo build --release
+
+# Open a HyperList file:
+./target/release/hyper path/to/file.hl
+```
+
+## What is HyperList?
+
+HyperList is a universal methodology for describing anything: any state, item, pattern, action, process, transition, program, or instruction set. It can be used as an outliner, a todo list, a process design tool, a data modeler, or any other way you want to describe something hierarchical.
+
+Learn more: <https://isene.org/hyperlist/>
+
+## Syntax coloring
+
+Hyper colors HyperList source the same way the Ruby TUI and the Vim plugin do:
+
+| Color | Role |
+|---|---|
+| Red | Properties (`Name: value`), dates, multi-line `+`, change markup |
+| Green | Qualifiers `[...]`, checkboxes, state / transition markers, semicolons |
+| Blue | Operators (ALL-CAPS ending in `:`, e.g. `AND:`, `OR:`) |
+| Magenta | References `<...>`, `<<...>>`, `SKIP`, `END` |
+| Cyan | Parentheses `(...)`, quoted strings |
+| Yellow | Substitutions `{...}` |
+| Orange | Hash tags `#tag` |
+
+Inline `*bold*`, `/italic/`, `_underline_` formatting is rendered.
+
+## Keys
+
+| Key | Action |
+|---|---|
+| `j` / `DOWN` | Move down (visible items) |
+| `k` / `UP` | Move up |
+| `h` / `LEFT` | Jump to parent |
+| `l` / `RIGHT` | Jump to first child (unfolds if needed) |
+| `PgUP` / `PgDOWN` | Page |
+| `g` / `HOME` | First item |
+| `G` / `END` | Last item |
+| `SPACE` | Toggle fold on current item |
+| `1` .. `9` | Fold all to level N |
+| `z` / `Z` | Collapse all / Expand all |
+| `o` | Open a file |
+| `W` | Save current file |
+| `?` | Help |
+| `q` | Quit (save) |
+| `Q` | Quit (no save) |
+
+## Config line
+
+A `.hl` file's first line may be a config block in double parens. Hyper honors `fold_level=N` at load time:
+
+```
+((fold_level=2, theme=normal))
+	Parent
+		Child (will be folded on load)
+			Grandchild
+```
+
+## Part of the Rust Terminal Suite (Fe2O3)
+
+See [fe2o3](https://github.com/isene/fe2o3) for the full suite.
+
+## License
+
+Unlicense (public domain).
