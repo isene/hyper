@@ -76,7 +76,8 @@ A `.hl` file's first line may be a config block in double parens. Hyper honors `
 
 ## Part of the Rust Terminal Suite (Fe2O3)
 
-See [fe2o3](https://github.com/isene/fe2o3) for the full suite.
+See the [Fe₂O₃ suite overview](https://github.com/isene/fe2o3) and the [landing page](https://isene.org/fe2o3/) for the full list of projects.
+
 
 ## License
 
