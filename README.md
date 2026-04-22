@@ -10,6 +10,12 @@ Rust feature port of the Ruby [HyperList TUI](https://github.com/isene/HyperList
 
 <br clear="left"/>
 
+## Screenshot
+
+![Screenshot](img/screenshot.png)
+
+*HyperList viewer with syntax coloring, folding, and indentation-driven structure.*
+
 ## Install
 
 ```bash
