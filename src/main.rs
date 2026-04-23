@@ -136,18 +136,44 @@ impl App {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "[no file]".into());
         let dirty = if self.dirty { " *" } else { "" };
-        let info = format!(" hyper v{}  {}{}  ({} items)",
-            VERSION, name, dirty, self.doc.items.len());
+        let info = format!(" {}{}  ({} items)", name, dirty, self.doc.items.len());
         self.header.say(&style::bold(&info));
     }
 
     fn render_footer(&mut self) {
-        if let Some((ref msg, color)) = self.status {
-            self.footer.say(&style::fg(msg, color));
+        // Left: status message if any, otherwise the hint line.
+        // Right: OSC 8 hyperlink on "hyper vX" pointing at the canonical
+        // HyperList homepage, right-aligned in the footer pane.
+        let left: String = if let Some((ref msg, color)) = self.status {
+            style::fg(msg, color)
         } else {
             let hint = " j/k:Move  h/l:Parent/Child  SPACE:Fold  1-9:Level  z/Z:CollapseAll/ExpandAll  o:Open  W:Save  ?:Help  q:Quit";
-            self.footer.say(&style::fg(hint, 245));
-        }
+            style::fg(hint, 245)
+        };
+        // OSC 8 open + visible text + OSC 8 close. Kitty-style terminals
+        // underline the linked text; others render it as plain text.
+        let version_link = format!(
+            "\x1b]8;;https://isene.org/hyperlist/\x1b\\hyper v{}\x1b]8;;\x1b\\",
+            VERSION
+        );
+        let right = style::fg(&version_link, 245);
+
+        let cols = self.cols as usize;
+        let left_w = crust::display_width(&left);
+        let right_w = crust::display_width(&right);
+        // One trailing space on the right so the link doesn't butt against
+        // the pane edge.
+        let right_padded = format!("{} ", right);
+        let right_w = right_w + 1;
+        let line = if left_w + right_w + 1 <= cols {
+            let gap = cols - left_w - right_w;
+            format!("{}{}{}", left, " ".repeat(gap), right_padded)
+        } else {
+            // Not enough room — drop the left side so the version stays visible.
+            let gap = cols.saturating_sub(right_w);
+            format!("{}{}", " ".repeat(gap), right_padded)
+        };
+        self.footer.say(&line);
     }
 
     fn footer_say(&mut self, msg: &str, c: u8) {
