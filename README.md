@@ -1,10 +1,10 @@
-# Hyper - Terminal HyperList Viewer
+# Hyper - Terminal HyperList Viewer & Editor
 
 <img src="img/hyper.svg" align="left" width="150" height="150">
 
 ![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
 
-Fast terminal viewer for the [HyperList](https://isene.org/hyperlist/) outline format. Opens `.hl` files, renders them with full HyperList 2.6 syntax coloring, and lets you fold/unfold hierarchies with a keystroke.
+Fast terminal viewer **and editor** for the [HyperList](https://isene.org/hyperlist/) outline format. Opens `.hl` files, renders them with full HyperList 2.6 syntax coloring, and brings the entire [hyperlist.vim](https://github.com/isene/hyperlist.vim) feature set to a standalone TUI: fold control, item editing, checkboxes, autonumbering, references, breadcrumbs, show/hide filters, presentation mode, complexity scoring, HTML / LaTeX / Markdown export, calendar export to [Tock](https://github.com/isene/tock), and gpg-symmetric encryption.
 
 Rust feature port of the Ruby [HyperList TUI](https://github.com/isene/HyperList), built on [crust](https://github.com/isene/crust).
 
@@ -51,6 +51,8 @@ Inline `*bold*`, `/italic/`, `_underline_` formatting is rendered.
 
 ## Keys
 
+### Navigation
+
 | Key | Action |
 |---|---|
 | `j` / `DOWN` | Move down (visible items) |
@@ -60,14 +62,60 @@ Inline `*bold*`, `/italic/`, `_underline_` formatting is rendered.
 | `PgUP` / `PgDOWN` | Page |
 | `g` / `HOME` | First item |
 | `G` / `END` | Last item |
+| `ENTER` / `r` | Goto reference (`<ref>`, `<<ref>>`, or `<file:…>` opens via xdg-open) |
+| `t` | Goto next template element (item ending in `=`) |
+
+### Folding & Views
+
+| Key | Action |
+|---|---|
 | `SPACE` | Toggle fold on current item |
-| `1` .. `9` | Fold all to level N |
-| `z` / `Z` | Collapse all / Expand all |
-| `o` | Open a file |
+| `1` .. `9`, `a` .. `f` | Fold all to level 1–15 |
+| `z` / `Z` | Collapse / expand all |
+| `S` / `H` | Show / Hide items containing keyword |
+| `F` | Clear show/hide filter |
+| `*` | Toggle highlight current branch (dim outside subtree) |
+| `p` | Toggle presentation mode (ancestors only) |
+
+### Edit
+
+| Key | Action |
+|---|---|
+| `i` | Edit current item |
+| `O` / `+` | New item above / below at same depth |
+| `D` | Delete current item and its subtree |
+| `Tab` / `Shift-Tab` | Indent / outdent current subtree |
+| `v` / `V` | Toggle checkbox / toggle with date stamp |
+| `R` | Renumber whole document |
+| `M-c` | Operator / property completion popup |
+
+### Info
+
+| Key | Action |
+|---|---|
+| `C` | Complexity score: items × (1 + max_depth/10) |
+
+### Export
+
+| Key | Action |
+|---|---|
+| `M-h` / `M-l` / `M-m` | Export to HTML / LaTeX / Markdown (writes alongside the source) |
+| `M-g` | Calendar — write `.ics` per future-dated item to `~/.tock/incoming/` |
+
+### Encryption (`gpg --symmetric`)
+
+| Key | Action |
+|---|---|
+| `e` / `E` | Encrypt current subtree / whole file |
+| `x` / `X` | Decrypt current subtree / whole file |
+
+### Files
+
+| Key | Action |
+|---|---|
+| `o` | Open a `.hl` file |
 | `W` | Save current file |
-| `?` | Help |
-| `q` | Quit (save) |
-| `Q` | Quit (no save) |
+| `?` / `q` / `Q` | Help / Quit (save) / Quit (no save) |
 
 ## Config line
 
