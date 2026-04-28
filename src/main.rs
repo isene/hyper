@@ -198,7 +198,7 @@ impl App {
             let prefix = if vis_i == self.visible_idx { "\u{2192} " } else { "  " };
             let row = format!("{}{}{} {}", prefix, indent, style::fg(mark, 244), body);
             let styled = if vis_i == self.visible_idx {
-                format!("\x1b[48;5;{}m{}\x1b[0m", 236, row)
+                style::bg(&row, 236)
             } else { row };
             lines.push(styled);
         }
