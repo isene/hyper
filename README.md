@@ -70,7 +70,8 @@ Inline `*bold*`, `/italic/`, `_underline_` formatting is rendered.
 | Key | Action |
 |---|---|
 | `SPACE` | Toggle fold on current item |
-| `1` .. `9`, `a` .. `f` | Fold all to level 1–15 |
+| `0` | Fold to level 1 (everything fully collapsed) |
+| `1` .. `9` | Fold all to level N |
 | `z` / `Z` | Collapse / expand all |
 | `S` / `H` | Show / Hide items containing keyword |
 | `F` | Clear show/hide filter |

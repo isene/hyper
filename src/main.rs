@@ -40,14 +40,12 @@ fn main() {
             "SPACE" | " " => { app.toggle_fold(); app.render_all(); }
             "z" => { app.collapse_all(); app.render_all(); }
             "Z" => { app.expand_all(); app.render_all(); }
+            // 0 collapses everything (only depth-0 items visible). 1..9 fold
+            // at level N. a..f are intentionally NOT bound — reserved for
+            // hyperlist.vim feature-parity actions (autonum, etc.).
+            "0" => { app.fold_to_level(1); app.render_all(); }
             "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
                 let n: usize = key.parse().unwrap_or(0);
-                app.fold_to_level(n);
-                app.render_all();
-            }
-            // a=10 .. f=15 — vim plugin's \a..\f extension to fold-level keys.
-            "a" | "b" | "c" | "d" | "e" | "f" => {
-                let n = 10 + (key.as_bytes()[0] - b'a') as usize;
                 app.fold_to_level(n);
                 app.render_all();
             }
@@ -1016,7 +1014,8 @@ impl App {
               t              Goto next template element (item ending in `=`)\n\n  \
             FOLDING & VIEWS\n  \
               SPACE          Toggle fold on current\n  \
-              1..9 / a..f    Fold all at level N (1–15)\n  \
+              0              Fold to level 1 (everything collapsed)\n  \
+              1..9           Fold all at level N\n  \
               z / Z          Collapse / expand all\n  \
               S / H          Show / Hide items by keyword\n  \
               F              Clear show/hide filter\n  \
