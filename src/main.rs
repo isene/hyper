@@ -1,3 +1,4 @@
+mod export;
 mod highlight;
 mod parser;
 
@@ -76,6 +77,19 @@ fn main() {
             "v" => { app.toggle_checkbox(false); app.render_all(); }
             "V" => { app.toggle_checkbox(true); app.render_all(); }
             "R" => { app.renumber_all(); app.render_all(); }
+            // Exporters
+            "M-h" => { app.export_to(ExportKind::Html); app.render_all(); }
+            "M-l" => { app.export_to(ExportKind::Latex); app.render_all(); }
+            "M-m" => { app.export_to(ExportKind::Markdown); app.render_all(); }
+            // Encryption (lowercase = item, uppercase = whole file).
+            "e" => { app.encrypt_line(); app.render_all(); }
+            "E" => { app.encrypt_all(); app.render_all(); }
+            "x" => { app.decrypt_line(); app.render_all(); }
+            "X" => { app.decrypt_all(); app.render_all(); }
+            // Calendar export of future-dated items.
+            "M-g" => { app.export_calendar(); app.render_all(); }
+            // Operator / property completion popup (Alt-c since Tab indents).
+            "M-c" => { app.complete_at_cursor(); app.render_all(); }
             _ => {}
         }
     }
@@ -85,6 +99,9 @@ fn main() {
 
 #[derive(Copy, Clone)]
 enum FilterMode { Show, Hide }
+
+#[derive(Copy, Clone)]
+enum ExportKind { Html, Latex, Markdown }
 
 struct App {
     doc: Document,
@@ -792,6 +809,198 @@ impl App {
         self.footer_say(" Renumbered all", 46);
     }
 
+    // ── Export to HTML / LaTeX / Markdown ──────────────────────────────
+    fn export_to(&mut self, kind: ExportKind) {
+        let Some(path) = self.filename.clone() else {
+            self.footer_say(" No file loaded — open one first", 196);
+            return;
+        };
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("hyperlist").to_string();
+        let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let (ext, body) = match kind {
+            ExportKind::Html     => ("html", export::to_html(&self.doc, &stem)),
+            ExportKind::Latex    => ("tex",  export::to_latex(&self.doc, &stem)),
+            ExportKind::Markdown => ("md",   export::to_markdown(&self.doc, &stem)),
+        };
+        let out_path = parent.join(format!("{}.{}", stem, ext));
+        match std::fs::write(&out_path, body) {
+            Ok(_)  => self.footer_say(&format!(" Wrote {}", out_path.display()), 46),
+            Err(e) => self.footer_say(&format!(" Export failed: {}", e), 196),
+        }
+    }
+
+    // ── Encryption per-line / file (vim \z / \Z / \x / \X) ────────────
+    fn encrypt_line(&mut self) {
+        let Some(idx) = self.current_item_idx() else { return };
+        if self.doc.items[idx].text.is_empty() { return; }
+        // Encrypt the subtree (item + descendants), matching vim's behavior
+        // of encrypting "the current line including all sublevels if folded".
+        let last = last_descendant(&self.doc.items, idx);
+        let mut plain = String::new();
+        for i in idx..=last {
+            if !self.doc.items[i].text.is_empty() {
+                for _ in 0..self.doc.items[i].depth { plain.push('\t'); }
+                plain.push_str(&self.doc.items[i].text);
+            }
+            plain.push('\n');
+        }
+        match gpg_encrypt(&plain) {
+            Ok(armored) => {
+                // Replace the subtree with a single sentinel item carrying the
+                // armored ciphertext on one logical line (newlines escaped).
+                let payload = format!("⊟ENC: {}", armored.replace('\n', "\\n"));
+                self.doc.items.drain(idx..=last);
+                self.doc.items.insert(idx, parser::Item { depth: self.doc.items.get(idx).map(|x| x.depth).unwrap_or(0), text: payload, folded: false, continuation: false });
+                self.dirty = true;
+                self.footer_say(" Encrypted subtree", 46);
+            }
+            Err(e) => self.footer_say(&format!(" gpg encrypt failed: {}", e), 196),
+        }
+    }
+
+    fn decrypt_line(&mut self) {
+        let Some(idx) = self.current_item_idx() else { return };
+        let txt = self.doc.items[idx].text.clone();
+        let Some(payload) = txt.strip_prefix("⊟ENC: ") else {
+            self.footer_say(" Not an encrypted item", 245);
+            return;
+        };
+        let armored = payload.replace("\\n", "\n");
+        match gpg_decrypt(&armored) {
+            Ok(plain) => {
+                // Re-parse the plaintext into items and splice them in.
+                let parsed = parser::parse(&plain);
+                self.doc.items.remove(idx);
+                for (k, item) in parsed.items.into_iter().enumerate() {
+                    self.doc.items.insert(idx + k, item);
+                }
+                self.dirty = true;
+                self.footer_say(" Decrypted subtree", 46);
+            }
+            Err(e) => self.footer_say(&format!(" gpg decrypt failed: {}", e), 196),
+        }
+    }
+
+    fn encrypt_all(&mut self) {
+        let plain = parser::serialize(&self.doc);
+        let Some(path) = self.filename.clone() else {
+            self.footer_say(" No file — encrypt-all needs a save target", 196); return;
+        };
+        match gpg_encrypt(&plain) {
+            Ok(armored) => {
+                if let Err(e) = std::fs::write(&path, armored) {
+                    self.footer_say(&format!(" Write failed: {}", e), 196);
+                } else {
+                    self.dirty = false;
+                    self.doc.items.clear();
+                    self.doc.items.push(parser::Item {
+                        depth: 0,
+                        text: format!("⊟ENC-FILE: {}", path.display()),
+                        folded: false, continuation: false,
+                    });
+                    self.footer_say(&format!(" Encrypted file written to {}", path.display()), 46);
+                }
+            }
+            Err(e) => self.footer_say(&format!(" gpg encrypt-all failed: {}", e), 196),
+        }
+    }
+
+    fn decrypt_all(&mut self) {
+        let Some(path) = self.filename.clone() else { self.footer_say(" No file loaded", 196); return; };
+        let armored = match std::fs::read_to_string(&path) {
+            Ok(s) => s, Err(e) => { self.footer_say(&format!(" Read failed: {}", e), 196); return; }
+        };
+        match gpg_decrypt(&armored) {
+            Ok(plain) => {
+                self.doc = parser::parse(&plain);
+                self.dirty = true;
+                self.footer_say(" Decrypted file", 46);
+            }
+            Err(e) => self.footer_say(&format!(" gpg decrypt-all failed: {}", e), 196),
+        }
+    }
+
+    // ── Calendar export (vim \G) ───────────────────────────────────────
+    fn export_calendar(&mut self) {
+        let mut events = Vec::new();
+        for (i, it) in self.doc.items.iter().enumerate() {
+            if it.text.is_empty() { continue; }
+            if let Some((y, m, d)) = scan_future_date(&it.text) {
+                events.push((i, y, m, d, it.text.clone()));
+            }
+        }
+        if events.is_empty() {
+            self.footer_say(" No future-dated items found", 245);
+            return;
+        }
+        let dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".tock/incoming");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.footer_say(&format!(" mkdir failed: {}", e), 196);
+            return;
+        }
+        let stamp = today();
+        for (i, y, m, d, summary) in &events {
+            let ics = build_ics(*y, *m, *d, summary);
+            let fname = dir.join(format!("hyper_{}_{}_{:03}.ics", stem_of(self.filename.as_ref()), stamp.replace('-', ""), i));
+            let _ = std::fs::write(fname, ics);
+        }
+        self.footer_say(&format!(" Wrote {} calendar event(s) to ~/.tock/incoming/", events.len()), 46);
+    }
+
+    // ── Operator/property completion (vim HyperListComplete) ──────────
+    fn complete_at_cursor(&mut self) {
+        // Show a popup listing operator keywords + property names seen in
+        // the document. User picks one with arrows and Enter; selected
+        // string is appended to the current item's text.
+        let Some(idx) = self.current_item_idx() else { return };
+        let mut suggestions: Vec<&'static str> = vec![
+            "AND: ", "OR: ", "NOT: ", "EXAMPLE: ", "IF: ", "ELSE: ", "WHEN: ",
+            "WHERE: ", "WHO: ", "WHY: ", "HOW: ", "DO: ", "USE: ", "BEFORE: ",
+            "AFTER: ", "WHILE: ", "UNTIL: ", "TODO: ", "SKIP: ", "END: ",
+        ];
+        let mut props: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for it in &self.doc.items {
+            if let Some(colon_pos) = it.text.find(": ") {
+                let key = it.text[..colon_pos].trim();
+                // Heuristic: not all-caps (operator), not empty, not punctuation.
+                if !key.is_empty()
+                    && !key.chars().all(|c| c.is_ascii_uppercase() || !c.is_alphabetic())
+                    && key.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' || c == '.')
+                {
+                    props.insert(format!("{}: ", key));
+                }
+            }
+        }
+        let mut props_vec: Vec<String> = props.into_iter().collect();
+        props_vec.sort();
+        let mut all: Vec<String> = suggestions.drain(..).map(String::from).collect();
+        all.extend(props_vec);
+        // Show as numbered popup; pressing 1-9 picks that suggestion.
+        let mut popup = String::from("\n  Completion — pick a number:\n\n");
+        for (n, s) in all.iter().take(20).enumerate() {
+            popup.push_str(&format!("  {}: {}\n", (n + 1) % 10, s));
+            if n == 9 { popup.push_str("\n"); }
+        }
+        popup.push_str("\n  Press number or any other key to cancel.");
+        self.main_p.set_text(&popup);
+        self.main_p.full_refresh();
+        let key = Input::getchr(None).unwrap_or_default();
+        let n: Option<usize> = match key.as_str() {
+            "1" => Some(1), "2" => Some(2), "3" => Some(3), "4" => Some(4), "5" => Some(5),
+            "6" => Some(6), "7" => Some(7), "8" => Some(8), "9" => Some(9), "0" => Some(10),
+            _ => None,
+        };
+        if let Some(n) = n {
+            if n - 1 < all.len() {
+                let txt = all[n - 1].clone();
+                let cur_text = self.doc.items[idx].text.clone();
+                self.doc.items[idx].text = if cur_text.is_empty() { txt } else { format!("{} {}", cur_text, txt) };
+                self.dirty = true;
+            }
+        }
+        self.render_main();
+    }
+
     fn show_help(&mut self) {
         let help = "\n  \
             hyper — HyperList terminal viewer\n\n  \
@@ -821,7 +1030,14 @@ impl App {
               D              Delete current item (and subtree)\n  \
               Tab / S-Tab    Indent / outdent current subtree\n  \
               v / V          Toggle checkbox / toggle with date stamp\n  \
-              R              Renumber whole document\n\n  \
+              R              Renumber whole document\n  \
+              M-c            Operator / property completion popup\n\n  \
+            EXPORT (Alt-key)\n  \
+              M-h / M-l / M-m  Export to HTML / LaTeX / Markdown\n  \
+              M-g              Calendar (future-dated items → ~/.tock/incoming/)\n\n  \
+            ENCRYPTION (gpg --symmetric)\n  \
+              e / E          Encrypt current subtree / whole file\n  \
+              x / X          Decrypt current subtree / whole file\n\n  \
             FILES\n  \
               o              Open a .hl file\n  \
               W              Save current file\n  \
@@ -968,6 +1184,148 @@ fn replace_leading_number(line: &str, n: usize) -> String {
     } else {
         format!("{}{}. {}", ws, n, rest)
     }
+}
+
+// ── GPG helpers ────────────────────────────────────────────────────────
+fn gpg_encrypt(plain: &str) -> std::io::Result<String> {
+    use std::io::Write;
+    let mut child = std::process::Command::new("gpg")
+        .args(["--batch", "--armor", "--symmetric", "--pinentry-mode", "loopback", "--passphrase-fd", "0"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    // Prompt user for passphrase via tty (no echo). Use rpassword-free
+    // approach: read from /dev/tty with stty -echo. Quick hack: ask via
+    // gpg's own pinentry by NOT using --batch — but that needs a TTY.
+    // For now we reuse our own footer ask which does NOT mask input.
+    // The user can configure ~/.gnupg/gpg-agent.conf to cache.
+    let pass = read_passphrase_tty()?;
+    {
+        let stdin = child.stdin.as_mut().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "no stdin"))?;
+        writeln!(stdin, "{}", pass)?;
+        stdin.write_all(plain.as_bytes())?;
+    }
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other,
+            format!("gpg exit: {}", String::from_utf8_lossy(&out.stderr))));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn gpg_decrypt(armored: &str) -> std::io::Result<String> {
+    use std::io::Write;
+    let pass = read_passphrase_tty()?;
+    let mut child = std::process::Command::new("gpg")
+        .args(["--batch", "--decrypt", "--pinentry-mode", "loopback", "--passphrase-fd", "0"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    {
+        let stdin = child.stdin.as_mut().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "no stdin"))?;
+        writeln!(stdin, "{}", pass)?;
+        stdin.write_all(armored.as_bytes())?;
+    }
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other,
+            format!("gpg exit: {}", String::from_utf8_lossy(&out.stderr))));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Read a passphrase from /dev/tty with echo disabled. Falls back to
+/// reading without disabling echo if stty isn't available.
+fn read_passphrase_tty() -> std::io::Result<String> {
+    use std::io::{BufRead, BufReader, Write as _};
+    // Disable echo via stty.
+    let _ = std::process::Command::new("stty").arg("-echo").status();
+    let mut tty = std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty")?;
+    write!(tty, "\nPassphrase: ")?;
+    tty.flush().ok();
+    let mut reader = BufReader::new(&tty);
+    let mut pass = String::new();
+    reader.read_line(&mut pass)?;
+    let _ = std::process::Command::new("stty").arg("echo").status();
+    writeln!(&tty)?;
+    Ok(pass.trim_end_matches('\n').to_string())
+}
+
+// ── Calendar helpers ───────────────────────────────────────────────────
+fn scan_future_date(text: &str) -> Option<(i64, u32, u32)> {
+    // Match Nordic DD.MM.YYYY, ISO YYYY-MM-DD, EU DD/MM/YYYY.
+    let bytes = text.as_bytes();
+    let today = today();
+    let (ty, tm, td) = parse_iso(&today)?;
+    let mut i = 0;
+    while i < bytes.len() {
+        // Try ISO YYYY-MM-DD
+        if i + 9 < bytes.len() && bytes[i].is_ascii_digit() {
+            if let Some(d) = try_iso_at(text, i) { if is_future(d, (ty, tm, td)) { return Some(d); } }
+            if let Some(d) = try_nordic_at(text, i) { if is_future(d, (ty, tm, td)) { return Some(d); } }
+            if let Some(d) = try_eu_at(text, i) { if is_future(d, (ty, tm, td)) { return Some(d); } }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn try_iso_at(s: &str, i: usize) -> Option<(i64, u32, u32)> {
+    let b = s.as_bytes();
+    if i + 9 >= b.len() { return None; }
+    let yr: String = b[i..i+4].iter().map(|&c| c as char).collect();
+    if b[i+4] != b'-' || b[i+7] != b'-' { return None; }
+    let mo: String = b[i+5..i+7].iter().map(|&c| c as char).collect();
+    let da: String = b[i+8..i+10].iter().map(|&c| c as char).collect();
+    Some((yr.parse().ok()?, mo.parse().ok()?, da.parse().ok()?))
+}
+
+fn try_nordic_at(s: &str, i: usize) -> Option<(i64, u32, u32)> {
+    let b = s.as_bytes();
+    if i + 9 >= b.len() { return None; }
+    if b[i+2] != b'.' || b[i+5] != b'.' { return None; }
+    let da: String = b[i..i+2].iter().map(|&c| c as char).collect();
+    let mo: String = b[i+3..i+5].iter().map(|&c| c as char).collect();
+    let yr: String = b[i+6..i+10].iter().map(|&c| c as char).collect();
+    Some((yr.parse().ok()?, mo.parse().ok()?, da.parse().ok()?))
+}
+
+fn try_eu_at(s: &str, i: usize) -> Option<(i64, u32, u32)> {
+    let b = s.as_bytes();
+    if i + 9 >= b.len() { return None; }
+    if b[i+2] != b'/' || b[i+5] != b'/' { return None; }
+    let da: String = b[i..i+2].iter().map(|&c| c as char).collect();
+    let mo: String = b[i+3..i+5].iter().map(|&c| c as char).collect();
+    let yr: String = b[i+6..i+10].iter().map(|&c| c as char).collect();
+    Some((yr.parse().ok()?, mo.parse().ok()?, da.parse().ok()?))
+}
+
+fn parse_iso(s: &str) -> Option<(i64, u32, u32)> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 { return None; }
+    Some((parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?))
+}
+
+fn is_future(d: (i64, u32, u32), today: (i64, u32, u32)) -> bool {
+    d > today
+}
+
+fn build_ics(y: i64, m: u32, d: u32, summary: &str) -> String {
+    format!(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//hyper//hyperlist//EN\r\n\
+        BEGIN:VEVENT\r\nUID:hyper-{:04}{:02}{:02}-{}@local\r\n\
+        DTSTART;VALUE=DATE:{:04}{:02}{:02}\r\n\
+        SUMMARY:{}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        y, m, d, summary.chars().take(8).collect::<String>().replace(' ', "_"),
+        y, m, d, summary.replace(',', "\\,").replace(';', "\\;").lines().next().unwrap_or("")
+    )
+}
+
+fn stem_of(p: Option<&std::path::PathBuf>) -> String {
+    p.and_then(|p| p.file_stem().and_then(|s| s.to_str()))
+        .unwrap_or("hyperlist").to_string()
 }
 
 /// Expand a leading `~` or `~/` to the user's home directory. Used by
