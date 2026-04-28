@@ -64,6 +64,18 @@ fn main() {
             "ENTER" | "\n" | "\r" | "C-M" | "C-J" | "r" => { app.goto_reference(); app.render_all(); }
             "t" => { app.goto_next_template(); app.render_all(); }
             "C" => { app.show_complexity(); }
+            // Editing
+            "i" => { app.edit_current(); app.render_all(); }
+            "O" => { app.insert_relative(false); app.render_all(); }
+            // Lower-case `o` is open-file; new-line-below uses `+` so it's
+            // ergonomic on a numpad/plus key.
+            "+" => { app.insert_relative(true); app.render_all(); }
+            "D" => { app.delete_current(); app.render_all(); }
+            "TAB" | "\t" => { app.indent_current(); app.render_all(); }
+            "S-TAB" | "BTab" | "B-TAB" => { app.outdent_current(); app.render_all(); }
+            "v" => { app.toggle_checkbox(false); app.render_all(); }
+            "V" => { app.toggle_checkbox(true); app.render_all(); }
+            "R" => { app.renumber_all(); app.render_all(); }
             _ => {}
         }
     }
@@ -604,6 +616,182 @@ impl App {
         self.render_main();
     }
 
+    // ── Edit mode (vim i / O / o / D / Tab / Shift-Tab) ───────────────
+    fn edit_current(&mut self) {
+        let Some(idx) = self.current_item_idx() else { return };
+        let it = self.doc.items[idx].clone();
+        if it.text.is_empty() {
+            // Blank-line items aren't really editable; treat as insert-below.
+            self.insert_relative(true);
+            return;
+        }
+        let prompt = format!(" ✎ [d{}] ", it.depth);
+        let new = self.footer.ask(&prompt, &it.text);
+        // ask() leaves footer in command-input bg; reset by re-rendering.
+        if new == it.text { return; }
+        self.doc.items[idx].text = new;
+        self.dirty = true;
+    }
+
+    /// Insert a blank item below (or above) the current cursor, at the same
+    /// depth, and immediately open it for editing.
+    fn insert_relative(&mut self, below: bool) {
+        let Some(cur) = self.current_item_idx() else {
+            // Empty document: just push a depth-0 item.
+            self.doc.items.push(parser::Item { depth: 0, text: String::new(), folded: false, continuation: false });
+            self.dirty = true;
+            self.visible_idx = 0;
+            self.edit_just_inserted(self.doc.items.len() - 1);
+            return;
+        };
+        let depth = self.doc.items[cur].depth;
+        // Insertion point: just after the cursor's subtree (below) or at the
+        // cursor (above).
+        let insert_at = if below {
+            last_descendant(&self.doc.items, cur) + 1
+        } else { cur };
+        let new = parser::Item { depth, text: String::new(), folded: false, continuation: false };
+        self.doc.items.insert(insert_at, new);
+        self.dirty = true;
+        self.edit_just_inserted(insert_at);
+    }
+
+    fn edit_just_inserted(&mut self, idx: usize) {
+        // Move the visible cursor onto the newly inserted item, render so the
+        // user sees it, then prompt for text.
+        if let Some(pos) = self.visible_items().iter().position(|&i| i == idx) {
+            self.visible_idx = pos;
+        }
+        self.render_all();
+        let prompt = format!(" + [d{}] ", self.doc.items[idx].depth);
+        let txt = self.footer.ask(&prompt, "");
+        if txt.trim().is_empty() {
+            // Empty input: drop the inserted item.
+            self.doc.items.remove(idx);
+            // Restore cursor to a sensible spot.
+            let n = self.visible_items().len();
+            if self.visible_idx >= n && n > 0 { self.visible_idx = n - 1; }
+        } else {
+            self.doc.items[idx].text = txt;
+        }
+    }
+
+    /// Delete the current item AND its subtree (matches vim plugin: dd on a
+    /// folded parent removes the whole branch).
+    fn delete_current(&mut self) {
+        let Some(idx) = self.current_item_idx() else { return };
+        if self.doc.items[idx].text.is_empty() { return; }
+        let last = last_descendant(&self.doc.items, idx);
+        self.doc.items.drain(idx..=last);
+        self.dirty = true;
+        let n = self.visible_items().len();
+        if self.visible_idx >= n && n > 0 { self.visible_idx = n - 1; }
+    }
+
+    /// Indent current item and its descendants by one level (vim Tab / <c-t>).
+    fn indent_current(&mut self) {
+        let Some(idx) = self.current_item_idx() else { return };
+        if self.doc.items[idx].text.is_empty() { return; }
+        let last = last_descendant(&self.doc.items, idx);
+        for i in idx..=last {
+            if !self.doc.items[i].text.is_empty() {
+                self.doc.items[i].depth += 1;
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Outdent current item and descendants (vim Shift-Tab / <c-d>). No-op when
+    /// already at depth 0.
+    fn outdent_current(&mut self) {
+        let Some(idx) = self.current_item_idx() else { return };
+        if self.doc.items[idx].text.is_empty() { return; }
+        if self.doc.items[idx].depth == 0 { return; }
+        let last = last_descendant(&self.doc.items, idx);
+        for i in idx..=last {
+            if !self.doc.items[i].text.is_empty() && self.doc.items[i].depth > 0 {
+                self.doc.items[i].depth -= 1;
+            }
+        }
+        self.dirty = true;
+    }
+
+    // ── Checkbox toggle (vim \v / \V) ──────────────────────────────────
+    /// Cycle: empty → `[_]` → `[x]` → empty. With `dated`=true, completion
+    /// pins a date stamp `(YYYY-MM-DD)` after the marker.
+    fn toggle_checkbox(&mut self, dated: bool) {
+        let Some(idx) = self.current_item_idx() else { return };
+        let txt = self.doc.items[idx].text.clone();
+        if txt.is_empty() { return; }
+        let trimmed = txt.trim_start();
+        let lead_ws = &txt[..txt.len() - trimmed.len()];
+        let new_body: String = if let Some(rest) = trimmed.strip_prefix("[_] ") {
+            // Empty box → checked.
+            if dated {
+                format!("[x] ({}) {}", today(), rest)
+            } else {
+                format!("[x] {}", rest)
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("[x] ") {
+            // Checked → unchecked (drop trailing date stamp if present).
+            let cleaned = strip_date_stamp(rest);
+            cleaned.to_string()
+        } else if let Some(rest) = trimmed.strip_prefix("[X] ") {
+            let cleaned = strip_date_stamp(rest);
+            cleaned.to_string()
+        } else {
+            // No box yet → add empty.
+            format!("[_] {}", trimmed)
+        };
+        self.doc.items[idx].text = format!("{}{}", lead_ws, new_body);
+        self.dirty = true;
+    }
+
+    // ── Autonumbering + renumber (vim \an / \# / \R) ──────────────────
+    /// Renumber the immediate children of `parent_idx` with `1.`, `2.`, …
+    /// Recursively renumbers their subtrees too. If `parent_idx` is None,
+    /// renumber depth-0 items.
+    fn renumber_under(&mut self, parent_idx: Option<usize>) {
+        let parent_depth = parent_idx.map(|i| self.doc.items[i].depth).unwrap_or(usize::MAX);
+        let target_depth = if parent_idx.is_none() { 0 } else { parent_depth + 1 };
+        // Range to walk: parent's subtree, or the whole doc.
+        let (start, end) = match parent_idx {
+            Some(p) => (p + 1, last_descendant(&self.doc.items, p) + 1),
+            None => (0, self.doc.items.len()),
+        };
+        let mut counter = 1usize;
+        let mut last_child: Option<usize> = None;
+        let mut i = start;
+        while i < end {
+            if self.doc.items[i].text.is_empty() { i += 1; continue; }
+            if self.doc.items[i].depth == target_depth {
+                let new_text = replace_leading_number(&self.doc.items[i].text, counter);
+                if new_text != self.doc.items[i].text {
+                    self.doc.items[i].text = new_text;
+                    self.dirty = true;
+                }
+                last_child = Some(i);
+                counter += 1;
+            } else if self.doc.items[i].depth > target_depth && last_child.is_some() {
+                // We crossed into a sub-tree of a child; recurse from the
+                // child via the immediate-children renumber.
+                if let Some(child) = last_child {
+                    self.renumber_under(Some(child));
+                    // Skip to after that child's subtree.
+                    i = last_descendant(&self.doc.items, child);
+                }
+            }
+            i += 1;
+        }
+    }
+
+    /// Renumber the entire document — every level under root.
+    fn renumber_all(&mut self) {
+        // Top-level pass.
+        self.renumber_under(None);
+        self.footer_say(" Renumbered all", 46);
+    }
+
     fn show_help(&mut self) {
         let help = "\n  \
             hyper — HyperList terminal viewer\n\n  \
@@ -627,6 +815,13 @@ impl App {
               p              Toggle presentation mode (ancestors only)\n\n  \
             INFO\n  \
               C              Complexity score (items × depth)\n\n  \
+            EDIT\n  \
+              i              Edit current item\n  \
+              O / +          New item above / below at same depth\n  \
+              D              Delete current item (and subtree)\n  \
+              Tab / S-Tab    Indent / outdent current subtree\n  \
+              v / V          Toggle checkbox / toggle with date stamp\n  \
+              R              Renumber whole document\n\n  \
             FILES\n  \
               o              Open a .hl file\n  \
               W              Save current file\n  \
@@ -699,6 +894,80 @@ fn strip_ansi(s: &str) -> String {
         }
     }
     out
+}
+
+fn today() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) as i64;
+    // Cheap proleptic Gregorian conversion. Days since 1970-01-01 (Thursday).
+    let days = secs / 86400;
+    let (y, m, d) = days_to_ymd(days);
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+fn days_to_ymd(mut days: i64) -> (i64, u32, u32) {
+    // Algorithm from "Calendrical Calculations" — accurate for 1900..2100+.
+    let mut year = 1970i64;
+    loop {
+        let leap = is_leap(year);
+        let dy = if leap { 366 } else { 365 };
+        if days < dy { break; }
+        days -= dy;
+        year += 1;
+    }
+    while days < 0 {
+        year -= 1;
+        let leap = is_leap(year);
+        days += if leap { 366 } else { 365 };
+    }
+    let dim: [u32; 12] = [31, if is_leap(year) { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0usize;
+    let mut d = days as u32;
+    while m < 12 && d >= dim[m] {
+        d -= dim[m];
+        m += 1;
+    }
+    (year, (m + 1) as u32, d + 1)
+}
+
+fn is_leap(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+/// Drop a `(YYYY-MM-DD)` suffix appended by `\V`-style toggles.
+fn strip_date_stamp(s: &str) -> &str {
+    let t = s.trim_start();
+    if t.starts_with('(') && t.len() >= 12 {
+        let close = t.find(')').unwrap_or(0);
+        if close > 0 {
+            let inside = &t[1..close];
+            // Looks like a date if it's 8-10 chars with two `-`.
+            if inside.matches('-').count() == 2 && inside.len() >= 8 && inside.len() <= 10 {
+                return t[close + 1..].trim_start();
+            }
+        }
+    }
+    s
+}
+
+/// Replace any leading `N.` (where N is 1+ digits) with `<n>.`. If the line
+/// has no leading number, prepend it.
+fn replace_leading_number(line: &str, n: usize) -> String {
+    let leading_ws_end = line.find(|c: char| !c.is_whitespace()).unwrap_or(line.len());
+    let (ws, rest) = line.split_at(leading_ws_end);
+    // Detect existing N. prefix.
+    let mut num_end = 0;
+    for (i, c) in rest.char_indices() {
+        if c.is_ascii_digit() { num_end = i + 1; }
+        else { break; }
+    }
+    if num_end > 0 && rest[num_end..].starts_with('.') {
+        let after = &rest[num_end + 1..];
+        let after = after.strip_prefix(' ').unwrap_or(after);
+        format!("{}{}. {}", ws, n, after)
+    } else {
+        format!("{}{}. {}", ws, n, rest)
+    }
 }
 
 /// Expand a leading `~` or `~/` to the user's home directory. Used by
