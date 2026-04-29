@@ -57,7 +57,7 @@ dependencies = [
 
 [[package]]
 name = "fe2o3-crust"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "crossterm",
  "libc",
@@ -72,7 +72,7 @@ checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 
 [[package]]
 name = "hyper"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "fe2o3-crust",
  "serde",
