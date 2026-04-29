@@ -17,6 +17,7 @@ fn main() {
     let filename = args.get(1).cloned();
 
     Crust::init();
+    Crust::set_app_identity("Hyper");
     let mut app = App::new();
     if let Some(f) = filename {
         app.load(&f);
